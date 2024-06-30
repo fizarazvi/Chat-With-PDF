@@ -1,63 +1,34 @@
 import os
-
-from dotenv import load_dotenv
-from langchain_core.prompts import PromptTemplate
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain_pinecone import PineconeVectorStore
-
-from langchain import hub
-from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_text_splitters import CharacterTextSplitter
+from langchain_openai import OpenAIEmbeddings, OpenAI
+from langchain_community.vectorstores import FAISS
 from langchain.chains.retrieval import create_retrieval_chain
-from langchain_core.runnables import RunnablePassthrough
-
-load_dotenv
-
-def format_docs(docs):
-    return "\n\n".join(doc.page_content for doc in docs)
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain import hub
 
 if __name__ == "__main__":
-    print("Retrieving")
+    print("hi")
+    pdf_path = "D:\\projects\\langchain\\ChatWithPDF\\reAct.pdf"
+    loader = PyPDFLoader(file_path=pdf_path)
+    documents = loader.load()
+    text_splitter = CharacterTextSplitter(
+        chunk_size = 1000, chunk_overlap = 30, separator="\n"
+    )
+    docs = text_splitter.split_documents(documents)
 
     embeddings = OpenAIEmbeddings()
-    llm = ChatOpenAI()
+    vectorstore = FAISS.from_documents(docs, embeddings)
+    vectorstore.save_local("faiss_index_react")
 
-    query = "What is Pinecone in machine learning?"
-    chain = PromptTemplate.from_template(template = query) | llm
-    result = chain.invoke(input={})
-    print(result.content)
-
-    print("\n**********************************\n***********************\n")
-
-    vectorstore = PineconeVectorStore(index_name = os.environ["INDEX_NAME"], embedding = embeddings)
+    new_vectorstore = FAISS.load_local("faiss_index_react", embeddings, allow_dangerous_deserialization=True)
 
     retrieval_qa_chat_prompt = hub.pull("langchain-ai/retrieval-qa-chat")
-    combine_docs_chain = create_stuff_documents_chain(llm, retrieval_qa_chat_prompt)
-    retrieval_chain = create_retrieval_chain(retriever = vectorstore.as_retriever(), combine_docs_chain=combine_docs_chain)
+    combine_docs_chain = create_stuff_documents_chain( OpenAI(), retrieval_qa_chat_prompt)
 
-    result = retrieval_chain.invoke(input = {"input" : query})
-
-    print(result)
-
-    print("\n************************\n**********************\n")
-
-    template = """Use the following pieces of context to answer the question at the end. If you don't know the answer, 
-    just say you don't know, don't try to make up an answer. Use three sentences maximum, be as concise as possible.
-    Always say "thanks for asking the question" at the end of the answer.
-    
-    {context}
-
-    Question: {question}
-
-    Helpful Answer: """
-
-    custom_rag_prompt =  PromptTemplate.from_template(template)
-
-    rag_chain = (
-        { "context" : vectorstore.as_retriever() | format_docs, "question" : RunnablePassthrough()}
-        | custom_rag_prompt
-        | llm
+    retrieval_chain = create_retrieval_chain(
+        new_vectorstore.as_retriever(), combine_docs_chain
     )
 
-    res = rag_chain.invoke(query)
-
-    print(res)
+    res = retrieval_chain.invoke({"input" : "Give me the gist of ReAct in 3 sentences"})
+    print(res["answer"])
